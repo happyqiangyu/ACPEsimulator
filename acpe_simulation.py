@@ -1,6 +1,13 @@
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib
+
+# Font config for Chinese, keep for compatibility
+matplotlib.rcParams['font.sans-serif'] = [
+    'Microsoft YaHei', 'STSong', 'Arial Unicode MS', 'Heiti SC', 'PingFang SC', 'SimSun'
+]
+matplotlib.rcParams['axes.unicode_minus'] = False
 
 st.title("ACPE Sudden Acceleration & Braking Simulation")
 
@@ -8,17 +15,17 @@ st.markdown("""
 This simulation models a scenario where the driver of an Ego vehicle accidentally slams the accelerator, causing a sudden acceleration. The ACPE system detects the unintended acceleration and, after a configurable delay, sends a braking command to the chassis. The deceleration is then applied at a fixed rate. You can adjust the following parameters in the sidebar:
 
 - **Distance to obstacle** (0–3 m)
-- **ACPE brake command delay** (0–5000 ms)
+- **ACPE brake command delay** (0–2000 ms)
 - **Braking deceleration** (0 to -20 m/s²)
 - **Sudden acceleration** (0–10 m/s²)
 
 The time-velocity graph below visualizes the scenario, and the final collision speed (if any) is shown.
 """)
 
-# Sliders for parameters in the sidebar
+# Sidebar parameters
 st.sidebar.header("Adjustable Parameters")
 distance_to_obstacle = st.sidebar.slider("Distance to obstacle (m)", 0.0, 3.0, 2.0, 0.01)
-delay_ms = st.sidebar.slider("ACPE brake command delay (ms)", 0, 5000, 600, 10)
+delay_ms = st.sidebar.slider("ACPE brake command delay (ms)", 0, 2000, 600, 10)
 brake_decel = st.sidebar.slider("Braking deceleration (m/s², negative)", -20.0, 0.0, -8.0, 0.1)
 accel = st.sidebar.slider("Sudden acceleration (m/s²)", 0.0, 10.0, 3.0, 0.1)
 
@@ -117,12 +124,30 @@ if not collision:
     turning_idx = np.argmax(time >= delay_s)
     turning_time = time[turning_idx]
     turning_velocity_kph = velocity_kph[turning_idx]
+    turning_position = position[turning_idx]
     ax1.axvline(turning_time, color='g', linestyle=':', label='Chassis Physical Braking Start')
-    ax1.annotate("Chassis Braking Start",
+    ax1.annotate(f"Chassis Braking Start\nDistance: {turning_position:.2f} m",
                  xy=(turning_time, turning_velocity_kph),
                  xytext=(turning_time, turning_velocity_kph + 2),
                  arrowprops=dict(facecolor='green', shrink=0.05),
                  fontsize=10, color='green', bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.7))
+
+    # Find all indices where velocity is zero
+    zero_vel_indices = np.where(velocity == 0)[0]
+    if len(zero_vel_indices) > 0:
+        stop_idx = zero_vel_indices[-1]
+        stop_distance = position[stop_idx]
+        stop_time = time[stop_idx]
+        stop_velocity_kph = velocity_kph[stop_idx]
+        ax1.plot(stop_time, stop_velocity_kph, 'go')
+        ax1.annotate(f"Stop\nDistance: {stop_distance:.2f} m",
+                     xy=(stop_time, stop_velocity_kph),
+                     xytext=(stop_time, stop_velocity_kph + 2),
+                     arrowprops=dict(facecolor='green', shrink=0.05),
+                     fontsize=10, color='green', bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.7))
+        st.markdown(f"**Distance traveled when vehicle comes to a complete stop after ACPE intervention: {stop_distance:.2f} m**")
+    else:
+        st.markdown("**No stop point detected.**")
 
 ax1.legend(loc='center left', bbox_to_anchor=(1, 0.5))
 st.pyplot(fig)
@@ -147,4 +172,28 @@ st.markdown(f"**Parameters:**  ")
 st.markdown(f"- Distance to obstacle: {distance_to_obstacle} m")
 st.markdown(f"- ACPE brake delay: {delay_ms} ms")
 st.markdown(f"- Braking deceleration: {brake_decel} m/s²")
-st.markdown(f"- Sudden acceleration: {accel} m/s²") 
+st.markdown(f"- Sudden acceleration: {accel} m/s²")
+
+# =================== New: Brake Stop Distance vs Delay Plot ===================
+
+# Generate stop distance data for different delays
+delay_range_ms = np.arange(0, 2001, 100)
+stop_distances = []
+for delay in delay_range_ms:
+    delay_s_temp = delay / 1000.0
+    time_temp, velocity_temp, position_temp, collision_temp = simulate_with_acpe(distance_to_obstacle=9999, delay_s=delay_s_temp, brake_decel=brake_decel, accel=accel)
+    zero_vel_indices = np.where(velocity_temp == 0)[0]
+    if len(zero_vel_indices) > 0:
+        stop_idx = zero_vel_indices[-1]
+        stop_distance = position_temp[stop_idx]
+        stop_distances.append(stop_distance)
+    else:
+        stop_distances.append(np.nan)
+
+fig2, ax2 = plt.subplots(figsize=(7, 4))
+ax2.plot(delay_range_ms, stop_distances, marker='o', color='teal')
+ax2.set_xlabel('Communication Delay (ms)')
+ax2.set_ylabel('Brake Stop Distance (m)')
+ax2.set_title('Effect of ADMC-Chassis Handshake and ACPE Brake Command Delay on Stop Distance')
+ax2.grid(True)
+st.pyplot(fig2) 
